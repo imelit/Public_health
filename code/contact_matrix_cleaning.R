@@ -1,0 +1,167 @@
+################################################################################
+#' Objective: Read and clean the contact matrices for Mexico
+#' Data source: repository, Kiesha Prem, last update 2021, CONAPO
+#' Created Date: March 12, 2025  
+#' Author: Imelda Trejo Lorenzo
+#' Date: June 27, 2025
+#' Project grant: CCM-UNAM & SECIHTI, PEE-2025-G-293
+#' 
+#' Last updated: JUNE 27, 2025
+################################################################################
+
+rm(list = ls())      # clear memory (removes all the variables from the workspace)
+
+library(tidyverse)
+library(readr)
+library(readxl)
+
+#My local desktop
+
+setwd("C:/Users/Imelda Trejo/OneDrive - UNIVERSIDAD NACIONAL AUTÓNOMA DE MÉXICO/CCM_UNAM/Research/Salud_publica/Contact_matrix/")
+source("code/Functions_contact_matrix_estimates.R")
+
+# Setting up model inputs
+
+
+year_analysis_selected <- 2025
+
+country_analysis_selected <-'MEX'
+
+
+# data path sources 
+
+premURL<- "https://raw.githubusercontent.com/kieshaprem/synthetic-contact-matrices/master/generate_synthetic_matrices/output/syntheticmatrices/synthetic_contacts_2021.csv"
+
+#====================================================================
+#   Read data and then select 
+#     1. country= Mexico for mean contact fraction per day
+#     2. year= to set up mexican population estimates
+#====================================================================
+
+contact_matrix  <- read_csv(premURL) %>%
+  filter(iso3c == country_analysis_selected)
+
+contact_matrix <- contact_matrix %>%
+  rename(age_contactee = age_cotactee)
+
+# save Prem data for Mexico
+#write.csv(contact_matrix, file =paste0("data/Mexico_contact_rates_06272025.csv"))
+
+population_all <- read_excel("data/0_Pob_Inicio_1950_2070 (proyeccion conapo para 2025).xlsx") %>%
+  filter(CVE_GEO == 0, AÑO == year_analysis_selected)
+
+#====================================================================
+# Collapse the 16x16 contact matrix onto 4x4 contact matrices 
+#====================================================================
+
+#old population group
+
+age_group_labels_prem <- unique(contact_matrix$age_contactor)
+
+age_group_breaks_prem <- c(0,5,10,15,20,25,30,35,40,45,50,55,60,65,70,75,200)
+
+population_by_age_prem <- grouping_age(age_group_breaks_prem,age_group_labels_prem,population_all)
+
+
+# new population subgroups  
+
+subgroups <- list(
+  "grp1: 0-4 years" = c("0 to 4"), #children
+  "grp2: 5-19 years" = c("5 to 9", "10 to 14", "15 to 19"),
+  "grp3: 20-64 years" = c("20 to 24", "25 to 29", "30 to 34", "35 to 39", #youth
+               "40 to 44", "45 to 49", "50 to 54", "55 to 59", "60 to 64"),
+  "grp4: 65+ years" = c("65 to 69", "70 to 74", "75+") #older_adults
+)
+
+# alternative labels from  'age0to4','age5to19','age20to64','age65plus'
+
+age_group_labels <- names(subgroups)
+
+age_group_breaks <- c(0,5,20,65,200)
+
+population_by_age <- grouping_age(age_group_breaks,age_group_labels,population_all)
+
+new_contact_matrix <- aggregate_contact_matrix(contact_matrix,population_by_age_prem,subgroups) 
+
+consistent_contact_matrix <- compute_consistent_matrix(new_contact_matrix,population_by_age)
+
+#====================================================================
+# Plots 
+#====================================================================
+
+# Plot 1: Plot heatmap with facets by location
+ggplot(new_contact_matrix, aes(x = age_contactor, y = age_contactee, fill = mean_number_of_contacts)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = round(mean_number_of_contacts, 1)), color = "white", size = 3) +
+  scale_fill_viridis_c(option = "H", name = "mean_number_contacts") +
+  facet_wrap(~ location_contact) +
+  labs(
+    title = "Contact Matrices by Location",
+    x = "Age group contacted",
+    y = "Age group of contactor"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+
+# Plot 2: CPlot heatmap with facets by location
+ggplot(consistent_contact_matrix, aes(x = age_contactor, y = age_contactee, fill = mean_number_of_contacts)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = round(mean_number_of_contacts, 1)), color = "white", size = 3) +
+  scale_fill_viridis_c(option = "H", name = "mean_number_contacts") +
+  facet_wrap(~ location_contact) +
+  labs(
+    title = "Consitant Contact Matrices by Location",
+    x = "Age group contacted",
+    y = "Age group of contactor"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+ggplot(population_by_age, aes(x = AGE_GROUP, y = POPULATION)) +
+  geom_bar(stat = "identity", fill = "#1f77b4", width = 0.8) +
+  labs(
+    title = paste("Total population by age group as year", year_analysis_selected),
+    x = "Age group (years)",
+    y = "Total population"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+
+#testing calculation
+
+Matrix_home <- contact_matrix_location(consistent_contact_matrix,"home")
+Matrix_work <- contact_matrix_location(consistent_contact_matrix,"work")
+Matrix_school <- contact_matrix_location(consistent_contact_matrix,"school")
+Matrix_others <- contact_matrix_location(consistent_contact_matrix,"others")
+Matrix_all <- contact_matrix_location(consistent_contact_matrix,"all")
+
+contact_mat_sum <- Matrix_home + Matrix_work + Matrix_school + Matrix_others
+
+print(Matrix_all-contact_mat_sum) #almost zero
+
+# Generar lista con matrices 4x4 por ubicación
+
+location_names <- c("home", "work", "school", "others")
+
+contact_matrix_list <- lapply(location_names, function(loc) {
+  contact_matrix_location(consistent_contact_matrix, loc)
+})
+
+# Asignar nombres a la lista
+names(contact_matrix_list) <- location_names
+
+# Guarda la lista como archivo RDS
+saveRDS(contact_matrix_list, file = "data/contact_matrix_list.rds")
+
+# Save both data in a list
+contact_population <- list(
+  matrices = contact_matrix_list,
+  population = population_by_age
+)
+
+# Save as a one objects
+saveRDS(contact_population, file = "data/contact_matrix_population.rds")
